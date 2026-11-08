@@ -6,7 +6,9 @@ import { tableLayout, sphereLayout, helixLayout, gridLayout } from './layouts.js
 
 const CFG = window.APP_CONFIG || {};
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets.readonly openid profile email';
+const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 const TOKEN_KEY = 'pt_token';
+let needConsent = false; // true after a sign-in that skipped the Sheets permission
 
 const $ = (id) => document.getElementById(id);
 const loginEl = $('login');
@@ -88,6 +90,13 @@ async function initAuth() {
         showLoginError('Sign-in failed: ' + (resp.error_description || resp.error));
         return;
       }
+      const o = google.accounts.oauth2;
+      if (typeof o.hasGrantedAllScopes === 'function' && !o.hasGrantedAllScopes(resp, SHEETS_SCOPE)) {
+        needConsent = true;
+        showLoginError('Please tick the permission to view your Google Sheets, then click Sign in again.');
+        return;
+      }
+      needConsent = false;
       saveToken(resp.access_token, Number(resp.expires_in) || 3600);
       startApp(resp.access_token);
     },
@@ -101,7 +110,7 @@ async function initAuth() {
 
 signinBtn.addEventListener('click', () => {
   showLoginError('');
-  if (tokenClient) tokenClient.requestAccessToken({ prompt: 'select_account' });
+  if (tokenClient) tokenClient.requestAccessToken({ prompt: needConsent ? 'consent' : 'select_account' });
 });
 
 $('signout').addEventListener('click', () => {
@@ -130,7 +139,10 @@ async function fetchSheet(token) {
               '/values/' + encodeURIComponent(CFG.SHEET_RANGE || 'A:F');
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
   if (r.status === 401) throw new AuthError('Your session expired. Please sign in again.');
-  if (r.status === 403) throw new Error('This Google account cannot read the Sheet. Share the Sheet with the account you signed in with.');
+  if (r.status === 403) {
+    needConsent = true; // next sign-in re-shows the permission screen
+    throw new Error('Access to the Sheet was denied. Click Sign in again and tick the Google Sheets permission, and use an account that can open the Sheet.');
+  }
   if (r.status === 404) throw new Error('Sheet not found. Check SHEET_ID in config.js.');
   if (!r.ok) throw new Error('Could not load the Sheet (HTTP ' + r.status + ').');
   const json = await r.json();
