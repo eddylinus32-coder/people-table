@@ -66,3 +66,70 @@ export function gridLayout(n) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Tetrahedron (4-face pyramid). One vertex points up; the four triangular faces
+// each carry ~n/4 tiles laid out in rows that widen from the apex to the base.
+// Tiles face outward, and `up` keeps the text upright along each face.
+// ---------------------------------------------------------------------------
+const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const vadd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const vmul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const vlen = (a) => Math.hypot(a[0], a[1], a[2]);
+const vnorm = (a) => vmul(a, 1 / (vlen(a) || 1));
+
+// Split m tiles over R rows with counts proportional to row width (1..R), summing to exactly m.
+export function pyramidRowCounts(m, R) {
+  const total = (R * (R + 1)) / 2;
+  const raw = Array.from({ length: R }, (_, r) => (m * (r + 1)) / total);
+  const counts = raw.map(Math.floor);
+  let rest = m - counts.reduce((a, b) => a + b, 0);
+  const order = raw.map((v, r) => [v - Math.floor(v), r]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; rest > 0; k = (k + 1) % R, rest--) counts[order[k][1]]++;
+  return counts;
+}
+
+export function pyramidLayout(n) {
+  const S = 1950;                          // edge length
+  const R = (S * Math.sqrt(6)) / 4;        // circumradius (centre to vertex)
+  const top = [0, R, 0];
+  const base = [90, 210, 330].map((deg) => {
+    const a = (deg * Math.PI) / 180;
+    const rho = (R * Math.sqrt(8)) / 3;
+    return [rho * Math.cos(a), -R / 3, rho * Math.sin(a)];
+  });
+  const [b0, b1, b2] = base;
+  // [apex, left, right] per face. A base corner points at the camera (+z), so two faces show at once.
+  const faces = [
+    [top, b1, b0],
+    [top, b2, b1],
+    [top, b0, b2],
+    [b0, b1, b2]                           // bottom face
+  ];
+
+  const out = new Array(n);
+  const per = Math.floor(n / 4);
+  const extra = n % 4;
+  let next = 0;
+  faces.forEach(([A, B, C], f) => {
+    const m = per + (f < extra ? 1 : 0);
+    if (!m) return;
+    const rows = Math.max(1, Math.ceil(Math.sqrt(2 * m)) - 1);
+    const counts = pyramidRowCounts(m, rows);
+    const centroid = vmul(vadd(vadd(A, B), C), 1 / 3);
+    const normal = vnorm(centroid);        // tetrahedron is centred on the origin
+    const up = vnorm(vsub(A, vmul(vadd(B, C), 0.5)));
+    for (let r = 0; r < rows; r++) {
+      const t = (r + 0.5) / rows;
+      const left = vadd(A, vmul(vsub(B, A), t));
+      const right = vadd(A, vmul(vsub(C, A), t));
+      for (let j = 0; j < counts[r]; j++) {
+        const u = (j + 0.5) / counts[r];
+        const raw = vadd(left, vmul(vsub(right, left), u));
+        const pos = vadd(centroid, vmul(vsub(raw, centroid), 0.92)); // inset from the edges
+        out[next++] = { pos, look: vadd(pos, vmul(normal, 1000)), up };
+      }
+    }
+  });
+  return out;
+}
